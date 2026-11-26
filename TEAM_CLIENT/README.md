@@ -68,22 +68,20 @@ New-NetFirewallRule -DisplayName "TaskFlow frontend 6001" -Direction Inbound -Pr
 docker build --build-arg VITE_API_BASE_URL=/api --build-arg VITE_SOCKET_PATH=/socket.io -t taskflow-frontend .
 ```
 
-### docker-compose service
+### docker-compose (frontend + Node)
 
-```yaml
-frontend:
-  build: ./frontend
-  ports: ["6001:80"]
-  depends_on: [laravel, node-service]
-  networks: [app_network]
+The repo root has `docker-compose.yml` running this frontend and `task-node` together
+(`cp .env.example .env`, `cp task-node/.env.example task-node/.env`, then `docker compose up -d --build`).
 
-networks:
-  app_network:
-    name: app_network
-```
+Nginx's upstreams come from the environment (`nginx.conf` is an nginx-image template):
 
-Nginx expects the services to be named **`laravel`** (port 8000) and **`node-service`**
-(port 3000) on the same network.
+| Var | Default | Use |
+|---|---|---|
+| `LARAVEL_UPSTREAM` | `http://laravel:8000` | Laravel service on `app_network`, or a LAN address (`http://192.168.1.37:8000`) |
+| `SOCKET_UPSTREAM` | `http://node-service:3000` | Node realtime service |
+
+Laravel must list the frontend's `host:port` (e.g. `localhost:6001`, `<LAN-IP>:6001`) in
+`SANCTUM_STATEFUL_DOMAINS`, or cookie sign-in fails.
 
 ## Backend contract
 

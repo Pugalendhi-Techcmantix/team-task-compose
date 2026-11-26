@@ -27,8 +27,14 @@ RUN npm run build
 # ---------- Stage 2: serve with Nginx ----------
 FROM nginx:1.27-alpine AS runtime
 
+# nginx.conf is a template: the image's entrypoint renders it to conf.d/default.conf at start,
+# filling in the upstreams below (override them with -e / compose `environment:`).
+ENV LARAVEL_UPSTREAM=http://laravel:8000 \
+    SOCKET_UPSTREAM=http://node-service:3000 \
+    NGINX_ENVSUBST_FILTER=_UPSTREAM
+
 RUN rm -f /etc/nginx/conf.d/default.conf
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80

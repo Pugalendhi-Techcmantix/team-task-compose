@@ -1,0 +1,52 @@
+# TaskFlow: React frontend (Nginx gateway) + Node.js realtime service.
+# Laravel is not in this repo: point LARAVEL_UPSTREAM at it (another compose project on
+# app_network → http://laravel:8000, or a LAN machine → http://192.168.1.37:8000).
+#
+#   cp .env.example .env                      # compose settings (ports, Laravel address)
+#   cp task-node/.env.example task-node/.env  # Node secrets: Redis, token secret, service token
+#   docker compose up -d --build              # → http://localhost:6001 and http://<LAN-IP>:6001
+#   docker compose logs -f
+#   docker compose down
+
+name: taskflow
+
+services:
+  frontend:
+    build:
+      context: ./TEAM_CLIENT
+      args:
+        VITE_APP_NAME: ${VITE_APP_NAME:-TaskFlow}
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+        VITE_SOCKET_PATH: /socket.io
+        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-cookie}
+    image: taskflow-frontend:latest
+    ports:
+      - "${FRONTEND_PORT:-6001}:80" # all interfaces → reachable on the LAN
+    environment:
+      LARAVEL_UPSTREAM: ${LARAVEL_UPSTREAM:-http://laravel:8000}
+      SOCKET_UPSTREAM: http://node-service:3000
+    depends_on:
+      node-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [app_network]
+
+  node-service:
+    build: ./task-node
+    image: taskflow-realtime:latest
+    # Secrets stay in task-node/.env (git-ignored, never copied into the image).
+    env_file: ./task-node/.env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOST: 0.0.0.0
+      # Browsers reach Node through the frontend's /socket.io proxy (same origin).
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:6001}
+    # Not published: only the frontend talks to it. Uncomment to debug from the host.
+    # ports: ["3001:3000"]
+    restart: unless-stopped
+    networks: [app_network]
+
+networks:
+  app_network:
+    name: app_network # fixed name so the Laravel compose project can join it
