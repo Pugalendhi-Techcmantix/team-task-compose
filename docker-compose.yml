@@ -1,52 +1,177 @@
-# TaskFlow: React frontend (Nginx gateway) + Node.js realtime service.
-# Laravel is not in this repo: point LARAVEL_UPSTREAM at it (another compose project on
-# app_network → http://laravel:8000, or a LAN machine → http://192.168.1.37:8000).
+# TaskFlow full stack: React (Nginx gateway) + Laravel API + Node realtime + PostgreSQL + Redis.
 #
-#   cp .env.example .env                      # compose settings (ports, Laravel address)
-#   cp task-node/.env.example task-node/.env  # Node secrets: Redis, token secret, service token
-#   docker compose up -d --build              # → http://localhost:6001 and http://<LAN-IP>:6001
-#   docker compose logs -f
-#   docker compose down
+#   cp .env.example .env        # then fill in the secrets (see the comments there)
+#   docker compose up -d --build
+#   → http://localhost:6001  and  http://<LAN-IP>:6001
+#   docker compose logs -f laravel node-service
+#   docker compose down         # add -v to also wipe the database and Redis data
+#
+# Only the frontend is published to the network. It is the single entry point:
+#   /            → React build
+#   /api, /sanctum → laravel:8000
+#   /socket.io   → node-service:3000
+# Laravel, Node, Postgres and Redis talk to each other on app_network only.
 
 name: taskflow
+
+x-shared-secrets: &shared
+  # Used by more than one service, so they are defined once in .env and always match.
+  REALTIME_TOKEN_SECRET: ${REALTIME_TOKEN_SECRET:?set REALTIME_TOKEN_SECRET in .env}
+  REDIS_EVENTS_CHANNEL: ${REDIS_EVENTS_CHANNEL:-taskflow:tasks}
 
 services:
   frontend:
     build:
       context: ./TEAM_CLIENT
       args:
-        VITE_APP_NAME: ${VITE_APP_NAME:-TaskFlow}
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+        VITE_APP_NAME: ${APP_NAME:-TaskFlow}
+        VITE_API_BASE_URL: /api/v1
         VITE_SOCKET_PATH: /socket.io
-        VITE_AUTH_MODE: ${VITE_AUTH_MODE:-cookie}
-    image: taskflow-frontend:latest
+        VITE_AUTH_MODE: cookie
+    image: taskflow/frontend:local
     ports:
       - "${FRONTEND_PORT:-6001}:80" # all interfaces → reachable on the LAN
     environment:
-      LARAVEL_UPSTREAM: ${LARAVEL_UPSTREAM:-http://laravel:8000}
+      LARAVEL_UPSTREAM: http://laravel:8000
       SOCKET_UPSTREAM: http://node-service:3000
     depends_on:
+      laravel:
+        condition: service_healthy
       node-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [app_network]
+
+  laravel:
+    build:
+      context: ./task-backend
+      target: runtime
+    image: taskflow/laravel-api:local
+    environment:
+      <<: *shared
+      APP_NAME: ${APP_NAME:-TaskFlow}
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_KEY: ${APP_KEY:?set APP_KEY in .env}
+      APP_URL: ${APP_URL:-http://localhost:6001}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-taskflow}
+      DB_USERNAME: ${DB_USERNAME:-taskflow}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      REDIS_CLIENT: predis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+      REALTIME_TOKEN_TTL: ${REALTIME_TOKEN_TTL:-900}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN in .env}
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      SESSION_LIFETIME: ${SESSION_LIFETIME:-120}
+      SESSION_SECURE_COOKIE: "false" # plain http on the LAN
+      SESSION_DOMAIN: "null"
+      # Every host:port people open the app on. Cookie sign-in fails from any other address.
+      SANCTUM_STATEFUL_DOMAINS: ${SANCTUM_STATEFUL_DOMAINS:-localhost:6001,127.0.0.1:6001}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:6001}
+      SANCTUM_TOKEN_EXPIRATION: ${SANCTUM_TOKEN_EXPIRATION:-1440}
+      SEED_DEFAULT_PASSWORD: ${SEED_DEFAULT_PASSWORD:-password}
+      RUN_MIGRATIONS: "true"
+      RUN_SEEDERS: ${RUN_SEEDERS:-true}
+    # Not published: reached through the frontend's /api proxy. Uncomment to call it directly.
+    # ports: ["8000:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     networks: [app_network]
 
   node-service:
     build: ./task-node
-    image: taskflow-realtime:latest
-    # Secrets stay in task-node/.env (git-ignored, never copied into the image).
-    env_file: ./task-node/.env
+    image: taskflow/realtime:local
     environment:
       NODE_ENV: production
       PORT: 3000
       HOST: 0.0.0.0
       # Browsers reach Node through the frontend's /socket.io proxy (same origin).
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:6001}
-    # Not published: only the frontend talks to it. Uncomment to debug from the host.
-    # ports: ["3001:3000"]
+      CORS_ORIGIN: ${CORS_ALLOWED_ORIGINS:-http://localhost:6001}
+      # Redis: subscribe-only ACL user created by task-backend/docker/redis/start.sh
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_USERNAME: ${REDIS_NODE_USERNAME:-taskflow_node}
+      REDIS_PASSWORD: ${REDIS_NODE_PASSWORD:?set REDIS_NODE_PASSWORD in .env}
+      REDIS_TASK_CHANNEL: ${REDIS_EVENTS_CHANNEL:-taskflow:tasks}
+      REDIS_CHAT_CHANNEL: "" # the ACL only allows the events channel
+      # Realtime tokens issued by Laravel (POST /api/v1/realtime/token)
+      REALTIME_TOKEN_SECRET: ${REALTIME_TOKEN_SECRET:?set REALTIME_TOKEN_SECRET in .env}
+      REALTIME_TOKEN_ISSUER: taskflow
+      REALTIME_TOKEN_AUDIENCE: realtime-service
+      # Laravel internal API: conversation membership + message storage
+      LARAVEL_API_URL: http://laravel:8000/api/v1
+      LARAVEL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN in .env}
+      CONVERSATION_AUTHORIZATION_MODE: laravel
+      MESSAGE_PERSISTENCE_MODE: laravel
+      LOG_LEVEL: ${NODE_LOG_LEVEL:-info}
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     networks: [app_network]
 
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-taskflow}
+      POSTGRES_USER: ${DB_USERNAME:-taskflow}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    ports:
+      # This PC only (pgAdmin, PHPUnit). Never exposed to the network.
+      - "127.0.0.1:${DB_FORWARD_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./task-backend/docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/01-test-db.sql:ro
+    healthcheck:
+      # TCP (-h), not the socket: on first start the init scripts run on a socket-only temporary
+      # server, which would report "ready" before the real one accepts connections.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks: [app_network]
+
+  redis:
+    image: redis:7-alpine
+    # Password-protected. Node gets its own subscribe-only ACL user (task-backend/docker/redis/start.sh).
+    entrypoint: ["sh", "/usr/local/bin/redis-start.sh"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+      REDIS_NODE_USERNAME: ${REDIS_NODE_USERNAME:-taskflow_node}
+      REDIS_NODE_PASSWORD: ${REDIS_NODE_PASSWORD:?set REDIS_NODE_PASSWORD in .env}
+      REDIS_EVENTS_CHANNEL: ${REDIS_EVENTS_CHANNEL:-taskflow:tasks}
+      REDISCLI_AUTH: ${REDIS_PASSWORD} # lets the healthcheck's redis-cli authenticate
+    # Not published (Node and Laravel are on app_network). Uncomment for local debugging only.
+    # ports: ["127.0.0.1:6380:6379"]
+    volumes:
+      - redis_data:/data
+      - ./task-backend/docker/redis/start.sh:/usr/local/bin/redis-start.sh:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+    networks: [app_network]
+
+volumes:
+  postgres_data:
+  redis_data:
+
 networks:
   app_network:
-    name: app_network # fixed name so the Laravel compose project can join it
+    name: app_network

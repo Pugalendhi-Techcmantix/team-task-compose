@@ -1,0 +1,106 @@
+# Dev 2 local stack: Laravel API + PostgreSQL + Redis.
+# Dev 3 copies the "laravel" service into the root TaskFlow compose file.
+#   docker compose up -d --build
+name: taskflow-backend
+
+services:
+  laravel:
+    build:
+      context: .
+      target: runtime
+    image: taskflow/laravel-api:local
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      APP_NAME: TaskFlow
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_KEY: ${APP_KEY:?APP_KEY must be set in .env}
+      APP_URL: http://localhost:${APP_PORT:-8000}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-taskflow}
+      DB_USERNAME: ${DB_USERNAME:-taskflow}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      REDIS_CLIENT: predis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
+      REDIS_EVENTS_CHANNEL: ${REDIS_EVENTS_CHANNEL:-taskflow:tasks}
+      REALTIME_TOKEN_SECRET: ${REALTIME_TOKEN_SECRET:?REALTIME_TOKEN_SECRET must be set in .env}
+      REALTIME_TOKEN_TTL: ${REALTIME_TOKEN_TTL:-900}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:?INTERNAL_SERVICE_TOKEN must be set in .env}
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      SESSION_LIFETIME: ${SESSION_LIFETIME:-120}
+      SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-false}
+      SANCTUM_STATEFUL_DOMAINS: ${SANCTUM_STATEFUL_DOMAINS:-localhost:8080,localhost:5173,localhost:5174}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
+      SANCTUM_TOKEN_EXPIRATION: ${SANCTUM_TOKEN_EXPIRATION:-1440}
+      SEED_DEFAULT_PASSWORD: ${SEED_DEFAULT_PASSWORD:-password}
+      RUN_MIGRATIONS: "true"
+      RUN_SEEDERS: ${RUN_SEEDERS:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [taskflow_network]
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-taskflow}
+      POSTGRES_USER: ${DB_USERNAME:-taskflow}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+    ports:
+      # Only this PC (pgAdmin, PHPUnit). Postgres is never exposed to the network:
+      # Laravel is the only service that talks to it.
+      - "127.0.0.1:${DB_FORWARD_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-test-db.sql:/docker-entrypoint-initdb.d/01-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks: [taskflow_network]
+
+  redis:
+    image: redis:7-alpine
+    # Password-protected; Node.js gets its own subscribe-only ACL user (docker/redis/start.sh).
+    entrypoint: ["sh", "/usr/local/bin/redis-start.sh"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
+      REDIS_NODE_USERNAME: ${REDIS_NODE_USERNAME:-taskflow_node}
+      REDIS_NODE_PASSWORD: ${REDIS_NODE_PASSWORD:?REDIS_NODE_PASSWORD must be set in .env}
+      REDIS_EVENTS_CHANNEL: ${REDIS_EVENTS_CHANNEL:-taskflow:tasks}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}   # lets the healthcheck's redis-cli authenticate
+    ports:
+      # Published to the Wi-Fi so the Node.js dev's laptop can subscribe (password + ACL protected).
+      - "${REDIS_FORWARD_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+      - ./docker/redis/start.sh:/usr/local/bin/redis-start.sh:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+    networks: [taskflow_network]
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  taskflow_network:
+    name: taskflow_network
