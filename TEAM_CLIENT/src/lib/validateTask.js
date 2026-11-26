@@ -8,7 +8,7 @@ export const PRIORITY_OPTIONS = [
   { value: 'high', label: 'High' },
 ]
 
-export const EMPTY_TASK = { title: '', description: '', status: TASK_STATUS.TODO, priority: 'medium', due_date: '' }
+export const EMPTY_TASK = { title: '', description: '', status: TASK_STATUS.TODO, priority: 'medium', due_date: '', assigned_to: '' }
 
 const isValidDate = (s) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false

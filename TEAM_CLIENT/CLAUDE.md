@@ -20,6 +20,10 @@ Browser ──> Nginx (this container, :80 → host :6001, all interfaces / LAN)
 - Laravel owns the data. The frontend never talks to PostgreSQL or Redis.
 - Node.js (Dev 3) pushes `notification` events over Socket.IO (no `task.*` events). The
   app toasts them (`RealtimeNotifier`) and the dashboard re-reads the named task from Laravel.
+- The bell's unread count is **Laravel's**, not counted in the browser: `NotificationInboxProvider`
+  (`src/socket/NotificationInbox.jsx`) loads `GET /notifications` + `/notifications/unread-count`
+  on sign-in and on every reconnect, then follows `notification` (`unreadCount`) and
+  `notification:count`. Mark-read goes to `POST /notifications/read-all` / `{uuid}/read`.
 
 ## Stack
 

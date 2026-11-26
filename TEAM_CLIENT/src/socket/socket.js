@@ -4,7 +4,8 @@ import { env } from '../config/env'
 /** Event names agreed with the Node.js real-time service (PLAN.md §3 Real-time). */
 export const SOCKET_EVENTS = Object.freeze({
   // server → client
-  NOTIFICATION: 'notification', // { id, type, title, message, taskId, createdAt }
+  NOTIFICATION: 'notification', // { id, type, title, message, taskId, createdAt, unreadCount? }
+  NOTIFICATION_COUNT: 'notification:count', // { unreadCount, updatedAt } (Laravel's count, all tabs)
   CHAT_MESSAGE: 'chat:message', // { id, conversationId, senderId, message, createdAt }
   TYPING_START: 'typing:start', // { conversationId, userId }
   TYPING_STOP: 'typing:stop',

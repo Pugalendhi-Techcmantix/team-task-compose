@@ -6,6 +6,7 @@ import App from './App'
 import { AuthProvider } from './context/AuthContext'
 import { NotificationProvider } from './context/NotificationContext'
 import { SocketProvider } from './socket/SocketContext'
+import { NotificationInboxProvider } from './socket/NotificationInbox'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -13,7 +14,9 @@ createRoot(document.getElementById('root')).render(
       <NotificationProvider>
         <AuthProvider>
           <SocketProvider>
-            <App />
+            <NotificationInboxProvider>
+              <App />
+            </NotificationInboxProvider>
           </SocketProvider>
         </AuthProvider>
       </NotificationProvider>

@@ -23,7 +23,7 @@ export default [
   },
   {
     // Context files export a Provider and its hook together on purpose.
-    files: ['src/context/**/*.jsx', 'src/socket/SocketContext.jsx'],
+    files: ['src/context/**/*.jsx', 'src/socket/SocketContext.jsx', 'src/socket/NotificationInbox.jsx'],
     rules: { 'react-refresh/only-export-components': 'off' },
   },
 ]

@@ -9,7 +9,7 @@
  * Demo login: demo@taskflow.dev / password
  */
 import { createServer } from 'node:http'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import express from 'express'
 import { Server } from 'socket.io'
 
@@ -318,10 +318,38 @@ api.post('/realtime/token', auth, (req, res) => {
   res.json({ data: { token, expires_at: new Date(exp).toISOString() } })
 })
 
-let nextNotificationId = 1
-/** Same shape as the real Node service: { id, type, title, message, taskId, createdAt } */
-const notifyAll = (type, title, task) =>
-  io.emit('notification', { id: nextNotificationId++, type, title, message: task.title, taskId: task.id, createdAt: now() })
+// ---------- notifications (Laravel stores them, Node pushes them) ----------
+const inbox = new Map() // userId → [{ id, type, data, read_at, created_at }] newest first
+const inboxOf = (userId) => inbox.get(userId) ?? inbox.set(userId, []).get(userId)
+const unreadOf = (userId) => inboxOf(userId).filter((n) => !n.read_at).length
+const userRoom = (id) => `user:${id}`
+const sendCount = (userId) => io.to(userRoom(userId)).emit('notification:count', { unreadCount: unreadOf(userId), updatedAt: now() })
+
+/** Same shape as the real Node service: { id, type, title, message, taskId, createdAt, unreadCount } */
+const notifyAll = (type, title, task) => {
+  for (const u of users) {
+    const row = { id: randomUUID(), type, data: { type, title, message: task.title, task_id: task.id }, read_at: null, created_at: now() }
+    inboxOf(u.id).unshift(row)
+    io.to(userRoom(u.id)).emit('notification', {
+      id: row.id, type, title, message: task.title, taskId: task.id, createdAt: row.created_at, unreadCount: unreadOf(u.id),
+    })
+  }
+}
+
+api.get('/notifications', auth, (req, res) => res.json({ data: inboxOf(req.user.id).slice(0, 30) }))
+api.get('/notifications/unread-count', auth, (req, res) => res.json({ data: { unread_count: unreadOf(req.user.id) } }))
+api.post('/notifications/read-all', auth, (req, res) => {
+  for (const n of inboxOf(req.user.id)) n.read_at ??= now()
+  sendCount(req.user.id)
+  res.json({ data: { unread_count: 0 } })
+})
+api.post('/notifications/:id/read', auth, (req, res) => {
+  const n = inboxOf(req.user.id).find((x) => x.id === req.params.id)
+  if (!n) return notFound(res)
+  n.read_at ??= now()
+  sendCount(req.user.id)
+  res.json({ data: n })
+})
 
 api.post('/tasks', auth, (req, res) => {
   const errors = validateTask(req.body ?? {}, false)
@@ -469,6 +497,7 @@ const fail = (ack, code, message) => reply(ack, { ok: false, error: { code, mess
 io.on('connection', (socket) => {
   const userId = socket.data.userId
   console.log(`socket connected user=${userId} id=${socket.id}`)
+  socket.join(userRoom(userId)) // every tab of this user gets their notifications
   openSockets.set(userId, (openSockets.get(userId) ?? 0) + 1)
   if (openSockets.get(userId) === 1) io.emit('presence:update', { userId, status: 'online', at: now() })
 

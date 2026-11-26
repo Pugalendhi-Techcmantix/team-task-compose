@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { EMPTY_TASK, PRIORITY_OPTIONS, STATUS_OPTIONS, validateTask } from '../../lib/validateTask'
 import { TASK_STATUS } from '../../lib/taskStatus'
 import { getErrorMessage, getFieldErrors } from '../../api/errors'
+import { usersApi } from '../../api/access'
+import { useFetch } from '../../hooks/useFetch'
 import Field, { SelectInput, TextArea, TextInput } from '../ui/Field'
 import Button from '../ui/Button'
 import FormAlert from '../ui/FormAlert'
@@ -14,8 +16,19 @@ const toFormValues = (task) =>
         status: task.status ?? TASK_STATUS.TODO,
         priority: task.priority ?? 'medium',
         due_date: task.due_date ? String(task.due_date).slice(0, 10) : '',
+        assigned_to: String(task.assigned_to ?? task.assignee?.id ?? ''),
       }
     : EMPTY_TASK
+
+/** "Unassigned" + every user. The current assignee stays selectable even if the list doesn't include them. */
+function assigneeOptions(users, task) {
+  const options = [{ value: '', label: 'Unassigned' }, ...users.map((u) => ({ value: String(u.id), label: u.name }))]
+  const current = task?.assignee
+  if (current?.id !== undefined && !options.some((o) => o.value === String(current.id))) {
+    options.push({ value: String(current.id), label: current.name ?? `User #${current.id}` })
+  }
+  return options
+}
 
 /**
  * Create / edit form. `onSubmit(values)` must return a promise; a rejected
@@ -27,6 +40,10 @@ export default function TaskForm({ task, onSubmit, onCancel }) {
   const [formError, setFormError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const editing = Boolean(task)
+  // Who can be assigned. If the list can't be loaded (e.g. no access to /users) the field is hidden
+  // and the task keeps its current assignee.
+  const users = useFetch(() => usersApi.list({ per_page: 100 }), [])
+  const canAssign = users.status === 'ready'
 
   const set = (field) => (e) => {
     setValues((v) => ({ ...v, [field]: e.target.value }))
@@ -74,9 +91,18 @@ export default function TaskForm({ task, onSubmit, onCancel }) {
         </Field>
       </div>
 
-      <Field label="Due date" error={errors.due_date} optional>
-        {(a) => <TextInput {...a} type="date" value={values.due_date} onChange={set('due_date')} />}
-      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Due date" error={errors.due_date} optional>
+          {(a) => <TextInput {...a} type="date" value={values.due_date} onChange={set('due_date')} />}
+        </Field>
+        {canAssign && (
+          <Field label="Assignee" error={errors.assigned_to} optional>
+            {(a) => (
+              <SelectInput {...a} options={assigneeOptions(users.data?.items ?? [], task)} value={values.assigned_to} onChange={set('assigned_to')} />
+            )}
+          </Field>
+        )}
+      </div>
 
       <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
         <Button variant="secondary" onClick={onCancel} disabled={submitting}>

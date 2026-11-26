@@ -1,9 +1,46 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import TaskForm from './TaskForm'
+import { usersApi } from '../../api/access'
+
+vi.mock('../../api/access', () => ({ usersApi: { list: vi.fn() } }))
+
+const USERS = [
+  { id: 9, name: 'Mathan' },
+  { id: 2, name: 'Priya Raman' },
+]
 
 describe('TaskForm', () => {
+  beforeEach(() => {
+    usersApi.list.mockReset().mockResolvedValue({ items: USERS, meta: null })
+  })
+
+  it('assigns the task to the chosen user', async () => {
+    const onSubmit = vi.fn().mockResolvedValue()
+    render(<TaskForm onSubmit={onSubmit} onCancel={() => {}} />)
+
+    await userEvent.type(screen.getByLabelText('Title'), 'Review PR')
+    await userEvent.selectOptions(await screen.findByLabelText(/Assignee/), 'Mathan')
+    await userEvent.click(screen.getByRole('button', { name: 'Create task' }))
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ title: 'Review PR', assigned_to: '9' }))
+  })
+
+  it('pre-selects the current assignee and hides the field when users cannot be loaded', async () => {
+    const task = { id: 1, title: 'Old', status: 'todo', priority: 'low', assigned_to: 2, assignee: { id: 2, name: 'Priya Raman' } }
+    const { unmount } = render(<TaskForm task={task} onSubmit={vi.fn()} onCancel={() => {}} />)
+    expect(await screen.findByLabelText(/Assignee/)).toHaveValue('2')
+    unmount()
+
+    usersApi.list.mockRejectedValue({ response: { status: 403 } })
+    const onSubmit = vi.fn().mockResolvedValue()
+    render(<TaskForm task={task} onSubmit={onSubmit} onCancel={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(screen.queryByLabelText(/Assignee/)).not.toBeInTheDocument()
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ assigned_to: '2' })) // unchanged, not cleared
+  })
+
   it('blocks submit on empty title and shows the error', async () => {
     const onSubmit = vi.fn()
     render(<TaskForm onSubmit={onSubmit} onCancel={() => {}} />)

@@ -35,6 +35,7 @@ function TaskRow({ task, fresh, busy, onStatusChange, onEdit, onDelete }) {
           {task.description && <p className="mt-1 line-clamp-2 text-sm text-ink-soft">{task.description}</p>}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
             <PriorityLabel priority={task.priority} />
+            {task.assignee?.name && <span className="text-xs text-ink-faint">→ {task.assignee.name}</span>}
             {due && (
               <span className={`text-xs ${due.overdue ? 'font-semibold text-danger' : due.soon ? 'font-medium text-st-progress' : 'text-ink-faint'}`}>
                 {due.text}

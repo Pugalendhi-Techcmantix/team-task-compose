@@ -125,15 +125,21 @@ Dev server: `http://192.168.1.222:3000`; the browser reaches it same-origin thro
   never stored). Rejections arrive as `connect_error.data.code`: `UNAUTHORIZED` | `INVALID_TOKEN` | `TOKEN_EXPIRED`
   (verified). On expiry the server disconnects; the client reconnects with a new token, and after 3 rejections in a
   row signs the user out.
-- Server → client: `notification` { id, type, title, message, taskId, createdAt } · `chat:message`
+- Server → client: `notification` { id, type, title, message, taskId, createdAt, unreadCount? } ·
+  `notification:count` { unreadCount, updatedAt } (Laravel's count after mark-read / read-all / delete, sent to
+  every tab of that user; matches Node's `notification.count_changed` → task-node/README.md) · `chat:message`
   { id, conversationId, senderId, message, createdAt } · `typing:start`/`typing:stop` { conversationId, userId } ·
   `presence:update` { userId, status, at } · `chat:error` { code, message, event }.
 - Client → server (with ack): `conversation:join`/`conversation:leave` { conversationId } · `chat:send`
   { conversationId, message } → { ok: true, data } · `typing:start`/`typing:stop` { conversationId } (no ack).
 - **No `task.*` events.** The dashboard re-reads `GET /tasks/{taskId}` when a notification names a task.
 - Never send userId/senderId. Add chat messages only from `chat:message`. Limits: 2000 chars, 20 msgs/10 s.
-- ❓ Open: notifications REST list, conversations + message history REST, ack error shape, whether the actor
-  also gets a notification for their own change.
+- Notifications REST (routes exist on Dev 2's backend, probed 2026-11-26; **body shapes not confirmed**):
+  `GET /notifications` (newest first) · `GET /notifications/unread-count` · `POST /notifications/{uuid}/read` ·
+  `POST /notifications/read-all`. Client: `src/api/notifications.js` (lenient readers) +
+  `NotificationInboxProvider` (bell count/list: REST on sign-in and reconnect, live via the two socket events).
+- ❓ Open: notifications response bodies, conversations + message history REST, ack error shape, whether the
+  actor also gets a notification for their own change.
 
 ## 4. Review Focus
 

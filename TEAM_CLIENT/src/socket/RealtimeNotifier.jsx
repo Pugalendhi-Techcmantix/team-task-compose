@@ -5,8 +5,9 @@ import { useSocketEvent } from './useSocketEvent'
 import { notificationText } from './notificationText'
 
 /**
- * App-wide: every `notification` event becomes a toast and a bell entry, on any page.
+ * App-wide: every `notification` event becomes a toast, on any page.
  * Skipped when it's about a task this tab just changed itself.
+ * (The bell's count and list come from NotificationInboxProvider.)
  */
 export default function RealtimeNotifier() {
   const { notify } = useNotifications()
@@ -14,7 +15,7 @@ export default function RealtimeNotifier() {
   useSocketEvent(SOCKET_EVENTS.NOTIFICATION, (n) => {
     if (isOwnTask(n?.taskId)) return
     const text = notificationText(n)
-    if (text) notify(text, { tone: 'live', record: true })
+    if (text) notify(text, { tone: 'live' })
   })
 
   return null
